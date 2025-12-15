@@ -53,7 +53,7 @@ impl<'p> BatchBuilder<'p> {
         let res = self
             .pocketbase
             .client
-            .post(format!("{}/api/batch", self.pocketbase.base_uri))
+            .post("/api/batch")
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,

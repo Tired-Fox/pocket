@@ -23,9 +23,7 @@ impl ExtendAuth for PocketBase {
 
 #[derive(Clone)]
 pub struct PocketBase {
-    client: HttpClient,
-    base_uri: String,
-
+    pub client: HttpClient,
     pub token: Option<Token>,
 }
 
@@ -33,7 +31,6 @@ impl PocketBase {
     pub fn new(base_uri: impl AsRef<str>) -> Self {
         Self {
             client: HttpClient::new(base_uri.as_ref()),
-            base_uri: base_uri.as_ref().to_string(),
             token: None,
         }
     }
@@ -51,8 +48,7 @@ impl PocketBase {
             let result = self
                 .client
                 .post(format!(
-                    "{}/api/collections/{collection}/auth-refresh",
-                    self.base_uri,
+                    "/api/collections/{collection}/auth-refresh",
                 ))
                 .header("Authorization", auth)
                 .send()?
@@ -95,7 +91,7 @@ impl PocketBase {
 
     pub fn files<'c>(&'c self) -> FilesBuilder<'c> {
         FilesBuilder {
-            base_uri: &self.base_uri,
+            base_url: &self.client.base_url,
         }
     }
 
@@ -109,7 +105,7 @@ impl PocketBase {
     pub fn health(&mut self) -> Result<Health, Error> {
         Ok(self
             .client
-            .get(format!("{}/api/health", self.base_uri))
+            .get("/api/health")
             .send()?
             .json()?)
     }

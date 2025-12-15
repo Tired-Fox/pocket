@@ -22,7 +22,7 @@ impl ExtendAuth for PocketBase {
 
 #[derive(Clone)]
 pub struct PocketBase {
-    client: HttpClient,
+    pub client: HttpClient,
     pub token: Option<Token>,
 }
 

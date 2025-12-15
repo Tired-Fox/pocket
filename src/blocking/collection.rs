@@ -29,8 +29,8 @@ where
             .pocketbase
             .client
             .post(format!(
-                "{}/api/collections/{}/auth-with-password",
-                self.pocketbase.base_uri, self.identifier,
+                "/api/collections/{}/auth-with-password",
+                self.identifier,
             ))
             .json(&json!({
                 "identity": identifier,
@@ -70,16 +70,11 @@ where
         self,
         options: ListOptions,
     ) -> Result<Paginated<T>, Error> {
-        let uri = format!(
-            "{}/api/collections/{}/records",
-            self.pocketbase.base_uri, self.identifier
-        );
-
         let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
-            .get(uri)
+            .get(format!("/api/collections/{}/records", self.identifier))
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,
@@ -99,16 +94,11 @@ where
         id: impl std::fmt::Display,
         options: ViewOptions,
     ) -> Result<T, Error> {
-        let uri = format!(
-            "{}/api/collections/{}/records/{id}",
-            self.pocketbase.base_uri, self.identifier
-        );
-
         let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
-            .get(uri)
+            .get(format!("/api/collections/{}/records/{id}", self.identifier))
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,
@@ -129,11 +119,6 @@ where
         files: impl IntoIterator<Item = (String, File)>,
         options: CreateOptions,
     ) -> Result<R, Error> {
-        let uri = format!(
-            "{}/api/collections/{}/records",
-            self.pocketbase.base_uri, self.identifier
-        );
-
         let mut form = http_client_multipart::Multipart::new();
 
         let record = serde_json::to_value(record)?;
@@ -173,7 +158,7 @@ where
         let res = self
             .pocketbase
             .client
-            .post(uri)
+            .post(format!("/api/collections/{}/records", self.identifier))
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,
@@ -196,11 +181,6 @@ where
         files: impl IntoIterator<Item = (String, File)>,
         options: UpdateOptions,
     ) -> Result<R, Error> {
-        let uri = format!(
-            "{}/api/collections/{}/records/{id}",
-            self.pocketbase.base_uri, self.identifier
-        );
-
         let mut form = Multipart::new();
 
         let record = serde_json::to_value(record)?;
@@ -240,7 +220,7 @@ where
         let res = self
             .pocketbase
             .client
-            .patch(uri)
+            .patch(format!("/api/collections/{}/records/{id}", self.identifier))
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,
@@ -257,16 +237,11 @@ where
     }
 
     pub async fn delete(self, id: impl std::fmt::Display) -> Result<(), Error> {
-        let uri = format!(
-            "{}/api/collections/{}/records/{id}",
-            self.pocketbase.base_uri, self.identifier
-        );
-
         let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
-            .delete(uri)
+            .delete(format!("/api/collections/{}/records/{id}", self.identifier))
             .header(
                 "Authorization",
                 token.ok_or(Error::custom("client is not authorized"))?,
