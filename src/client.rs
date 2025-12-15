@@ -16,7 +16,7 @@ use crate::Error;
 
 #[derive(Clone)]
 pub struct HttpClient {
-    base_url: Url,
+    pub(crate) base_url: Url,
     client: isahc::HttpClient,
 }
 

@@ -4,9 +4,10 @@ use std::{
 };
 
 use serde::Deserialize;
+use url::Url;
 
 pub struct FilesBuilder<'c> {
-    pub(crate) base_uri: &'c str,
+    pub(crate) base_url: &'c Url,
 }
 
 impl<'c> FilesBuilder<'c> {
@@ -15,11 +16,10 @@ impl<'c> FilesBuilder<'c> {
         collection_id: impl std::fmt::Display,
         id: impl std::fmt::Display,
         filename: impl std::fmt::Display,
-    ) -> String {
-        format!(
-            "{}/api/files/{collection_id}/{id}/{filename}",
-            self.base_uri
-        )
+    ) -> Url {
+        self.base_url
+            .join(&format!("/api/files/{collection_id}/{id}/{filename}"))
+            .unwrap()
     }
 }
 
