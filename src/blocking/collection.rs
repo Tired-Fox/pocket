@@ -1,54 +1,15 @@
+use std::io::Cursor;
+
 use chrono::{TimeZone, Utc};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+use http_client_multipart::Multipart;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 
-use crate::{Error, files::File, AuthResult, Claims, ExtendAuth, Paginated, PocketBase, PocketBaseError, Token};
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub per_page: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filter: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expand: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skip_total: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ViewOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expand: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expand: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expand: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<String>,
-}
+use super::{ExtendAuth, PocketBase};
+use crate::{
+    AuthResult, Claims, CreateOptions, Error, ListOptions, Paginated, PocketBaseError, Token,
+    UpdateOptions, ViewOptions, files::File,
+};
 
 pub struct CollectionBuilder<'c, I: std::fmt::Display> {
     pub(crate) pocketbase: &'c mut PocketBase,
@@ -68,30 +29,33 @@ where
             .pocketbase
             .client
             .post(format!(
-                    "{}/api/collections/{}/auth-with-password",
-                    self.pocketbase.base_uri,
-                    self.identifier,
+                "{}/api/collections/{}/auth-with-password",
+                self.pocketbase.base_uri, self.identifier,
             ))
             .json(&json!({
                 "identity": identifier,
                 "password": secret,
-            }))
-            .send()
+            }))?
+            .send_async()
             .await?
-            .json::<AuthResult>()
+            .json_async::<AuthResult>()
             .await
             .unwrap();
 
-        match result {
+        match &result {
             AuthResult::Error { message, .. } => {
-                return Err(Error::Custom(message.unwrap_or("failed to authenticate user".into())));
+                return Err(Error::Custom(
+                    message
+                        .clone()
+                        .unwrap_or("failed to authenticate user".into()),
+                ));
             }
             AuthResult::Success { token } => {
                 let claims = unsafe { Claims::decode_unsafe(&token)? };
                 self.pocketbase.token.replace(Token {
                     collection: self.identifier.to_string(),
 
-                    auth: token,
+                    auth: token.clone(),
                     refreshable: claims.refreshable,
                     ty: claims.ty,
                     expires: Utc.timestamp_opt(claims.exp, 0).unwrap(),
@@ -111,20 +75,23 @@ where
             self.pocketbase.base_uri, self.identifier
         );
 
+        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
             .get(uri)
-            .auth(self.pocketbase)
-            .await?
-            .query(&options)
-            .send()
+            .header(
+                "Authorization",
+                token.ok_or(Error::custom("client is not authorized"))?,
+            )
+            .query(&options)?
+            .send_async()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json::<PocketBaseError>().await?.into());
+            return Err(res.json_async::<PocketBaseError>().await?.into());
         }
-        Ok(res.json::<Paginated<T>>().await?)
+        Ok(res.json_async::<Paginated<T>>().await?)
     }
 
     pub async fn get_one<T: DeserializeOwned>(
@@ -137,20 +104,23 @@ where
             self.pocketbase.base_uri, self.identifier
         );
 
+        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
             .get(uri)
-            .auth(self.pocketbase)
-            .await?
-            .query(&options)
-            .send()
+            .header(
+                "Authorization",
+                token.ok_or(Error::custom("client is not authorized"))?,
+            )
+            .query(&options)?
+            .send_async()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json::<PocketBaseError>().await?.into());
+            return Err(res.json_async::<PocketBaseError>().await?.into());
         }
-        Ok(res.json::<T>().await?)
+        Ok(res.json_async::<T>().await?)
     }
 
     pub async fn create<R: DeserializeOwned>(
@@ -164,12 +134,12 @@ where
             self.pocketbase.base_uri, self.identifier
         );
 
-        let mut form = reqwest::multipart::Form::new();
+        let mut form = http_client_multipart::Multipart::new();
 
         let record = serde_json::to_value(record)?;
-        let fields = record
-            .as_object()
-            .ok_or(Error::Custom("expected record to be a mapping of fields to values".to_string()))?;
+        let fields = record.as_object().ok_or(Error::Custom(
+            "expected record to be a mapping of fields to values".to_string(),
+        ))?;
 
         for (name, value) in fields {
             let text = match value {
@@ -180,28 +150,43 @@ where
                 Value::Array(v) => serde_json::to_string(v)?,
                 Value::Object(v) => serde_json::to_string(v)?,
             };
-            form = form.text(name.to_string(), text);
+            form.add_text(name.to_string(), text);
         }
 
         for (name, file) in files.into_iter() {
-            form = form.part(name.to_string(), file.into_form_part().await?);
+            match file {
+                File::Path(path) => form
+                    .add_file(name, path, None)
+                    .await
+                    .map_err(Error::custom)?,
+                File::Raw {
+                    filename,
+                    mime,
+                    bytes,
+                } => form
+                    .add_sync_read(name, filename, &mime, None, Cursor::new(bytes))
+                    .map_err(Error::custom)?,
+            }
         }
 
+        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
             .post(uri)
-            .auth(self.pocketbase)
-            .await?
-            .query(&options)
-            .multipart(form)
-            .send()
+            .header(
+                "Authorization",
+                token.ok_or(Error::custom("client is not authorized"))?,
+            )
+            .query(&options)?
+            .multipart(form)?
+            .send_async()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json::<PocketBaseError>().await?.into());
+            return Err(res.json_async::<PocketBaseError>().await?.into());
         }
-        Ok(res.json::<R>().await?)
+        Ok(res.json_async::<R>().await?)
     }
 
     pub async fn update<R: DeserializeOwned>(
@@ -216,12 +201,12 @@ where
             self.pocketbase.base_uri, self.identifier
         );
 
-        let mut form = reqwest::multipart::Form::new();
+        let mut form = Multipart::new();
 
         let record = serde_json::to_value(record)?;
-        let fields = record
-            .as_object()
-            .ok_or(Error::Custom("expected record to be a mapping of fields to values".to_string()))?;
+        let fields = record.as_object().ok_or(Error::Custom(
+            "expected record to be a mapping of fields to values".to_string(),
+        ))?;
 
         for (name, value) in fields {
             let text = match value {
@@ -232,28 +217,43 @@ where
                 Value::Array(v) => serde_json::to_string(v)?,
                 Value::Object(v) => serde_json::to_string(v)?,
             };
-            form = form.text(name.to_string(), text);
+            form.add_text(name.to_string(), text);
         }
 
         for (name, file) in files.into_iter() {
-            form = form.part(name.to_string(), file.into_form_part().await?);
+            match file {
+                File::Path(path) => form
+                    .add_file(name, path, None)
+                    .await
+                    .map_err(Error::custom)?,
+                File::Raw {
+                    filename,
+                    mime,
+                    bytes,
+                } => form
+                    .add_sync_read(name, filename, &mime, None, Cursor::new(bytes))
+                    .map_err(Error::custom)?,
+            }
         }
 
+        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
             .patch(uri)
-            .auth(self.pocketbase)
-            .await?
-            .query(&options)
-            .multipart(form)
-            .send()
+            .header(
+                "Authorization",
+                token.ok_or(Error::custom("client is not authorized"))?,
+            )
+            .query(&options)?
+            .multipart(form)?
+            .send_async()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json::<PocketBaseError>().await?.into());
+            return Err(res.json_async::<PocketBaseError>().await?.into());
         }
-        Ok(res.json::<R>().await?)
+        Ok(res.json_async::<R>().await?)
     }
 
     pub async fn delete(self, id: impl std::fmt::Display) -> Result<(), Error> {
@@ -262,17 +262,20 @@ where
             self.pocketbase.base_uri, self.identifier
         );
 
+        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
             .client
             .delete(uri)
-            .auth(self.pocketbase)
-            .await?
-            .send()
+            .header(
+                "Authorization",
+                token.ok_or(Error::custom("client is not authorized"))?,
+            )
+            .send_async()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json::<PocketBaseError>().await?.into());
+            return Err(res.json_async::<PocketBaseError>().await?.into());
         }
         Ok(())
     }

@@ -1,12 +1,12 @@
-use std::{borrow::Cow, path::{Path, PathBuf}};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
-use reqwest::multipart::Part;
 use serde::Deserialize;
 
-use crate::{Error, PocketBase};
-
 pub struct FilesBuilder<'c> {
-    pub(crate) pocketbase: &'c PocketBase,
+    pub(crate) base_uri: &'c str,
 }
 
 impl<'c> FilesBuilder<'c> {
@@ -18,7 +18,7 @@ impl<'c> FilesBuilder<'c> {
     ) -> String {
         format!(
             "{}/api/files/{collection_id}/{id}/{filename}",
-            self.pocketbase.base_uri
+            self.base_uri
         )
     }
 }
@@ -31,7 +31,7 @@ pub enum File {
         filename: String,
         mime: String,
         bytes: Cow<'static, [u8]>,
-    }
+    },
 }
 
 impl File {
@@ -39,7 +39,11 @@ impl File {
         Self::Path(path.as_ref().to_path_buf())
     }
 
-    pub fn raw(name: impl std::fmt::Display, mime: impl std::fmt::Display, bytes: impl Into<Cow<'static, [u8]>>) -> Self {
+    pub fn raw(
+        name: impl std::fmt::Display,
+        mime: impl std::fmt::Display,
+        bytes: impl Into<Cow<'static, [u8]>>,
+    ) -> Self {
         Self::Raw {
             filename: name.to_string(),
             mime: mime.to_string(),
@@ -47,16 +51,16 @@ impl File {
         }
     }
 
-    pub(crate) async fn into_form_part(self) -> Result<Part, Error> {
-        Ok(match self {
-            Self::Path(path) => Part::file(path).await?,
-            Self::Raw { mime, bytes, filename: name } => {
-                Part::bytes(bytes)
-                    .mime_str(&mime)?
-                    .file_name(name)
-            }
-        })
-    }
+    // pub(crate) async fn into_form_part(self) -> Result<Part, Error> {
+    //     Ok(match self {
+    //         Self::Path(path) => Part::file(path).await?,
+    //         Self::Raw { mime, bytes, filename: name } => {
+    //             Part::bytes(bytes)
+    //                 .mime_str(&mime)?
+    //                 .file_name(name)
+    //         }
+    //     })
+    // }
 }
 
 impl From<String> for File {
