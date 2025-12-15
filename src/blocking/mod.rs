@@ -8,7 +8,7 @@ pub use batch::BatchBuilder;
 
 use crate::{AuthResult, Claims, Error, Health, HttpClient, Token, files::FilesBuilder};
 
-pub(crate) trait ExtendAuth: Sized {
+pub trait ExtendAuth: Sized {
     fn authenticate(&mut self) -> Result<Option<String>, Error>;
 }
 impl ExtendAuth for PocketBase {

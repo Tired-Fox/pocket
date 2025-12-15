@@ -7,7 +7,7 @@ use collection::CollectionBuilder;
 
 use crate::{AuthResult, Claims, Error, FilesBuilder, Health, HttpClient, Token};
 
-pub(crate) trait ExtendAuth: Sized {
+pub trait ExtendAuth: Sized {
     fn authenticate(&mut self) -> impl Future<Output = Result<Option<String>, Error>> + Send;
 }
 impl ExtendAuth for PocketBase {
