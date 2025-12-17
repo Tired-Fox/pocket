@@ -39,19 +39,21 @@ where
             .await
             .unwrap();
 
-        match &result {
-            AuthResult::Error { message, .. } => {
-                Err(Error::Custom(
-                    message
+        match result {
+            AuthResult::Error { message, data, .. } => {
+                Err(Error::Authorization {
+                    message: message
                         .clone()
                         .unwrap_or("failed to authenticate user".into()),
-                ))
+                    data,
+                })
             }
-            AuthResult::Success { token } => {
+            AuthResult::Success { token, record } => {
                 let claims = unsafe { Claims::decode_unsafe(&token)? };
                 Ok(AuthorizedClient::new(
                     self.pocketbase.base_uri(),
                     Token {
+                        user: record.as_object().unwrap().get("id").unwrap().as_str().unwrap().to_string(),
                         collection: self.identifier.to_string(),
 
                         auth: token.clone(),

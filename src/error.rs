@@ -1,9 +1,22 @@
+use std::collections::BTreeMap;
+
 use isahc::http::uri::InvalidUri;
+use serde::Deserialize;
 
 use crate::PocketBaseError;
 
+#[derive(Debug, Deserialize)]
+pub struct FieldError {
+    pub code: String,
+    pub message: String,
+}
+
 #[derive(Debug)]
 pub enum Error {
+    Authorization {
+        message: String,
+        data: BTreeMap<String, FieldError>
+    },
     Unauthorized,
     Custom(String),
 }
@@ -16,6 +29,16 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Authorization { message, data } => {
+                writeln!(f, "{message}")?;
+                write!(f,
+                    "  {}",
+                    data.iter()
+                        .map(|(name, FieldError { code: _, message })| format!("{name}: {message}"))
+                        .collect::<Vec<_>>()
+                        .join("\n  ")
+                )
+            },
             Self::Unauthorized => write!(f, "unauthrized"),
             Self::Custom(value) => f.write_str(value),
         }

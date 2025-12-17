@@ -1,7 +1,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 use futures_lite::io::AsyncRead;
 use serde_json::Value;
-use std::io::Read;
+use std::{collections::BTreeMap, io::Read};
 
 use http_client_multipart::Multipart;
 use isahc::{
@@ -14,15 +14,16 @@ use isahc::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use url::Url;
 
-use crate::{Claims, Error, FilesBuilder, Health, batch::BatchBuilder, collection::CollectionBuilder};
+use crate::{Claims, Error, FilesBuilder, Health, batch::BatchBuilder, collection::CollectionBuilder, error::FieldError};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Token {
+    pub collection: String,
+    pub user: String,
     pub auth: String,
     pub expires: DateTime<Utc>,
     pub refreshable: bool,
     pub ty: String,
-    pub collection: String,
 }
 impl Token {
     pub fn is_expired(&self) -> bool {
@@ -139,10 +140,11 @@ pub enum AuthResult {
         #[serde(default)]
         message: Option<String>,
         #[serde(default)]
-        data: Option<Value>,
+        data: BTreeMap<String, FieldError>,
     },
     Success {
         token: String,
+        record: Value,
     },
 }
 
@@ -188,9 +190,10 @@ impl AuthorizedClient {
                     message.unwrap_or("failed to authenticate user".into()),
                 ));
             }
-            AuthResult::Success { token } => {
+            AuthResult::Success { token, record } => {
                 let claims = unsafe { Claims::decode_unsafe(&token)? };
                 self.token = Token {
+                    user: record.as_object().unwrap().get("id").unwrap().as_str().unwrap().to_string(),
                     collection: collection.clone(),
                     auth: token,
                     refreshable: claims.refreshable,
