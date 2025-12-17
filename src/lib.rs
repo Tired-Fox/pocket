@@ -101,7 +101,7 @@ pub struct Paginated<T> {
     pub per_page: usize,
     pub total_items: usize,
     pub total_pages: usize,
-    pub items: Vec<T>,
+    pub items: Option<Vec<T>>,
 }
 
 impl<T: Clone> Clone for Paginated<T> {
