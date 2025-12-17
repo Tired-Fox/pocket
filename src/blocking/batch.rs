@@ -4,19 +4,18 @@ use http_client_multipart::Multipart;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 
-use super::{ExtendAuth, PocketBase};
-use crate::{BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions};
+use crate::{BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions, client::PocketBaseClient};
 
-pub struct BatchBuilder<'p> {
-    pub(crate) pocketbase: &'p mut PocketBase,
+pub struct BatchBuilder<'p, P: PocketBaseClient> {
+    pub(crate) pocketbase: &'p P,
     pub(crate) requests: Vec<BatchRequest>,
 }
 
-impl<'p> BatchBuilder<'p> {
+impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
     pub fn collection<'c, I: std::fmt::Display>(
         &'c mut self,
         identifier: I,
-    ) -> BatchCollectionBuilder<'p, 'c, I> {
+    ) -> BatchCollectionBuilder<'p, 'c, P, I> {
         BatchCollectionBuilder {
             batch: self,
             identifier,
@@ -49,15 +48,9 @@ impl<'p> BatchBuilder<'p> {
             }
         }
 
-        let token = self.pocketbase.authenticate()?;
         let res = self
             .pocketbase
-            .client
             .post("/api/batch")
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .multipart(form)?
             .send_async()
             .await?;
@@ -69,12 +62,12 @@ impl<'p> BatchBuilder<'p> {
     }
 }
 
-pub struct BatchCollectionBuilder<'p, 'c, I: std::fmt::Display> {
-    batch: &'c mut BatchBuilder<'p>,
+pub struct BatchCollectionBuilder<'p, 'c, P: PocketBaseClient, I: std::fmt::Display> {
+    batch: &'c mut BatchBuilder<'p, P>,
     identifier: I,
 }
 
-impl<'p, 'c, N> BatchCollectionBuilder<'p, 'c, N>
+impl<'p, 'c, P: PocketBaseClient, N> BatchCollectionBuilder<'p, 'c, P, N>
 where
     N: std::fmt::Display,
 {

@@ -4,6 +4,7 @@ use crate::PocketBaseError;
 
 #[derive(Debug)]
 pub enum Error {
+    Unauthorized,
     Custom(String),
 }
 impl Error {
@@ -15,6 +16,7 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Unauthorized => write!(f, "unauthrized"),
             Self::Custom(value) => f.write_str(value),
         }
     }

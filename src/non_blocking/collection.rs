@@ -6,27 +6,26 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use crate::{
-    AuthResult, Claims, CreateOptions, Error, ListOptions, Paginated, PocketBase, PocketBaseError,
-    Token, UpdateOptions, ViewOptions, files::File, non_blocking::ExtendAuth,
+    AuthorizedClient, Claims, CreateOptions, Error, ListOptions, Paginated, PocketBaseError, Token, UpdateOptions, ViewOptions, client::{AuthResult, PocketBaseClient}, files::File
 };
 
-pub struct CollectionBuilder<'c, I: std::fmt::Display> {
-    pub(crate) pocketbase: &'c mut PocketBase,
+pub struct CollectionBuilder<'c, P: PocketBaseClient, I: std::fmt::Display> {
+    pub(crate) pocketbase: &'c P,
     pub(crate) identifier: I,
 }
 
-impl<'c, N> CollectionBuilder<'c, N>
+impl<'c, P, N> CollectionBuilder<'c, P, N>
 where
+    P: PocketBaseClient,
     N: std::fmt::Display,
 {
     pub async fn auth_with_password(
         &mut self,
         identifier: &str,
         secret: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<AuthorizedClient, Error> {
         let result = self
             .pocketbase
-            .client
             .post(format!(
                 "/api/collections/{}/auth-with-password",
                 self.identifier,
@@ -43,41 +42,36 @@ where
 
         match &result {
             AuthResult::Error { message, .. } => {
-                return Err(Error::Custom(
+                Err(Error::Custom(
                     message
                         .clone()
                         .unwrap_or("failed to authenticate user".into()),
-                ));
+                ))
             }
             AuthResult::Success { token } => {
                 let claims = unsafe { Claims::decode_unsafe(&token)? };
-                self.pocketbase.token.replace(Token {
-                    collection: self.identifier.to_string(),
+                Ok(AuthorizedClient::new(
+                    self.pocketbase.base_uri(),
+                    Token {
+                        collection: self.identifier.to_string(),
 
-                    auth: token.clone(),
-                    refreshable: claims.refreshable,
-                    ty: claims.ty,
-                    expires: Utc.timestamp_opt(claims.exp, 0).unwrap(),
-                });
+                        auth: token.clone(),
+                        refreshable: claims.refreshable,
+                        ty: claims.ty,
+                        expires: Utc.timestamp_opt(claims.exp, 0).unwrap(),
+                    }
+                ))
             }
         }
-
-        Ok(())
     }
 
     pub async fn get_list<T: DeserializeOwned>(
         self,
         options: ListOptions,
     ) -> Result<Paginated<T>, Error> {
-        let token = self.pocketbase.authenticate().await?;
         let res = self
             .pocketbase
-            .client
             .get(format!("/api/collections/{}/records", self.identifier))
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .query(&options)?
             .send_async()
             .await?;
@@ -85,6 +79,7 @@ where
         if !res.status().is_success() {
             return Err(res.json_async::<PocketBaseError>().await?.into());
         }
+
         Ok(res.json_async::<Paginated<T>>().await?)
     }
 
@@ -93,15 +88,9 @@ where
         id: impl std::fmt::Display,
         options: ViewOptions,
     ) -> Result<T, Error> {
-        let token = self.pocketbase.authenticate().await?;
         let res = self
             .pocketbase
-            .client
             .get(format!("/api/collections/{}/records/{id}", self.identifier))
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .query(&options)?
             .send_async()
             .await?;
@@ -153,15 +142,9 @@ where
             }
         }
 
-        let token = self.pocketbase.authenticate().await?;
         let res = self
             .pocketbase
-            .client
             .post(format!("/api/collections/{}/records", self.identifier))
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .query(&options)?
             .multipart(form)?
             .send_async()
@@ -215,15 +198,9 @@ where
             }
         }
 
-        let token = self.pocketbase.authenticate().await?;
         let res = self
             .pocketbase
-            .client
             .patch(format!("/api/collections/{}/records/{id}", self.identifier))
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .query(&options)?
             .multipart(form)?
             .send_async()
@@ -236,15 +213,9 @@ where
     }
 
     pub async fn delete(self, id: impl std::fmt::Display) -> Result<(), Error> {
-        let token = self.pocketbase.authenticate().await?;
         let res = self
             .pocketbase
-            .client
             .delete(format!("/api/collections/{}/records/{id}", self.identifier))
-            .header(
-                "Authorization",
-                token.ok_or(Error::custom("client is not authorized"))?,
-            )
             .send_async()
             .await?;
 

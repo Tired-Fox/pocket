@@ -1,4 +1,6 @@
+use chrono::{DateTime, TimeZone, Utc};
 use futures_lite::io::AsyncRead;
+use serde_json::Value;
 use std::io::Read;
 
 use http_client_multipart::Multipart;
@@ -9,18 +11,40 @@ use isahc::{
         uri::PathAndQuery,
     },
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use url::Url;
 
-use crate::Error;
+use crate::{Claims, Error, FilesBuilder, Health, batch::BatchBuilder, collection::CollectionBuilder};
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Token {
+    pub auth: String,
+    pub expires: DateTime<Utc>,
+    pub refreshable: bool,
+    pub ty: String,
+    pub collection: String,
+}
+impl Token {
+    pub fn is_expired(&self) -> bool {
+        self.expires > Utc::now()
+    }
+}
+
+pub trait PocketBaseClient {
+    fn base_uri(&self) -> String;
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
+}
 
 #[derive(Clone)]
-pub struct HttpClient {
+pub struct Client {
     pub base_url: Url,
     client: isahc::HttpClient,
 }
 
-impl HttpClient {
+impl Client {
     pub fn new(base_url: impl AsRef<str>) -> Self {
         Self {
             client: isahc::HttpClient::new().unwrap(),
@@ -28,7 +52,49 @@ impl HttpClient {
         }
     }
 
-    pub fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+    pub fn authorize(&self, token: Token) -> AuthorizedClient {
+        AuthorizedClient { client: self.clone(), token }
+    }
+
+    pub fn collection<'c, I: std::fmt::Display>(
+        &'c self,
+        identifier: I,
+    ) -> CollectionBuilder<'c, Self, I> {
+        CollectionBuilder {
+            pocketbase: self,
+            identifier,
+        }
+    }
+
+    pub fn create_batch<'c>(&'c self) -> BatchBuilder<'c, Self> {
+        BatchBuilder {
+            pocketbase: self,
+            requests: Default::default(),
+        }
+    }
+
+    pub fn files<'c>(&'c self) -> FilesBuilder<'c> {
+        FilesBuilder {
+            base_url: &self.base_url,
+        }
+    }
+
+    pub async fn health(&self) -> Result<Health, Error> {
+        Ok(self
+            .get("/api/health")
+            .send_async()
+            .await?
+            .json_async()
+            .await?)
+    }
+}
+
+impl PocketBaseClient for Client {
+    fn base_uri(&self) -> String {
+        self.base_url.to_string()
+    }
+
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
         RequestBuilder {
             client: &self.client,
             request_builder: isahc::Request::get(
@@ -37,7 +103,7 @@ impl HttpClient {
         }
     }
 
-    pub fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
         RequestBuilder {
             client: &self.client,
             request_builder: isahc::Request::post(
@@ -46,7 +112,7 @@ impl HttpClient {
         }
     }
 
-    pub fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
         RequestBuilder {
             client: &self.client,
             request_builder: isahc::Request::patch(
@@ -55,13 +121,144 @@ impl HttpClient {
         }
     }
 
-    pub fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
         RequestBuilder {
             client: &self.client,
             request_builder: isahc::Request::delete(
                 self.base_url.join(uri.as_ref()).unwrap().to_string(),
             ),
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AuthResult {
+    Error {
+        status: u16,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        data: Option<Value>,
+    },
+    Success {
+        token: String,
+    },
+}
+
+#[derive(Clone)]
+pub struct AuthorizedClient {
+    client: Client,
+    token: Token,
+}
+
+impl AuthorizedClient {
+    pub fn new(base_url: impl AsRef<str>, token: Token) -> Self {
+        Self {
+            client: Client::new(base_url),
+            token
+        }
+    }
+
+    pub fn token(self) -> Token {
+        self.token
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.token.is_expired()
+    }
+
+    pub async fn refresh(&mut self) -> Result<(), Error> {
+        let Token {
+            auth, collection, ..
+        } = &self.token;
+
+        let result = self
+            .client
+            .post("/api/collections/{collection}/auth-refresh")
+            .header("Authorization", auth)
+            .send_async()
+            .await?
+            .json_async::<AuthResult>()
+            .await?;
+
+        match result {
+            AuthResult::Error { message, .. } => {
+                return Err(Error::Custom(
+                    message.unwrap_or("failed to authenticate user".into()),
+                ));
+            }
+            AuthResult::Success { token } => {
+                let claims = unsafe { Claims::decode_unsafe(&token)? };
+                self.token = Token {
+                    collection: collection.clone(),
+                    auth: token,
+                    refreshable: claims.refreshable,
+                    ty: claims.ty,
+                    expires: Utc.timestamp_opt(claims.exp, 0).unwrap(),
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn collection<'c, I: std::fmt::Display>(
+        &'c self,
+        identifier: I,
+    ) -> CollectionBuilder<'c, Self, I> {
+        CollectionBuilder {
+            pocketbase: self,
+            identifier,
+        }
+    }
+
+    pub fn create_batch<'c>(&'c self) -> BatchBuilder<'c, Self> {
+        BatchBuilder {
+            pocketbase: self,
+            requests: Default::default(),
+        }
+    }
+
+    pub fn files<'c>(&'c self) -> FilesBuilder<'c> {
+        FilesBuilder {
+            base_url: &self.client.base_url,
+        }
+    }
+
+    pub async fn health(&self) -> Result<Health, Error> {
+        Ok(self
+            .get("/api/health")
+            .send_async()
+            .await?
+            .json_async()
+            .await?)
+    }
+}
+
+impl PocketBaseClient for AuthorizedClient {
+    fn base_uri(&self) -> String {
+        self.client.base_uri()
+    }
+
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+        self.client.get(uri)
+            .header("Authorization", &self.token.auth)
+    }
+
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+        self.client.post(uri)
+            .header("Authorization", &self.token.auth)
+    }
+
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+        self.client.patch(uri)
+            .header("Authorization", &self.token.auth)
+    }
+
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
+        self.client.delete(uri)
+            .header("Authorization", &self.token.auth)
     }
 }
 

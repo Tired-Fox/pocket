@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -8,7 +7,7 @@ pub type Record = serde_json::Map<String, Value>;
 
 pub mod blocking;
 pub mod non_blocking;
-pub use non_blocking::{PocketBase, batch, collection};
+pub use non_blocking::{batch, collection};
 
 mod error;
 pub use error::Error;
@@ -16,23 +15,8 @@ pub use error::Error;
 pub mod files;
 pub use files::FilesBuilder;
 
-mod client;
-pub(crate) use client::HttpClient;
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum AuthResult {
-    Error {
-        status: u16,
-        #[serde(default)]
-        message: Option<String>,
-        #[serde(default)]
-        data: Option<Value>,
-    },
-    Success {
-        token: String,
-    },
-}
+pub mod client;
+pub use client::{Client, AuthorizedClient, Token, PocketBaseClient};
 
 #[derive(Debug, Deserialize)]
 struct PocketBaseError {
@@ -70,15 +54,6 @@ impl Claims {
         let token = jsonwebtoken::dangerous::insecure_decode::<Claims>(token)?;
         Ok(token.claims)
     }
-}
-
-#[derive(Clone)]
-pub struct Token {
-    pub auth: String,
-    pub expires: DateTime<Utc>,
-    pub refreshable: bool,
-    pub ty: String,
-    pub collection: String,
 }
 
 #[derive(Debug, Deserialize)]
