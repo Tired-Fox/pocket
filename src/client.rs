@@ -26,7 +26,7 @@ pub struct Token {
 }
 impl Token {
     pub fn is_expired(&self) -> bool {
-        self.expires > Utc::now()
+        self.expires < Utc::now()
     }
 }
 
@@ -175,7 +175,7 @@ impl AuthorizedClient {
 
         let result = self
             .client
-            .post("/api/collections/{collection}/auth-refresh")
+            .post(format!("/api/collections/{collection}/auth-refresh"))
             .header("Authorization", auth)
             .send_async()
             .await?
