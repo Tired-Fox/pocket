@@ -1,13 +1,12 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub type Record = serde_json::Map<String, Value>;
 
-pub mod blocking;
-pub mod non_blocking;
-pub use non_blocking::{batch, collection};
+pub mod batch;
+pub mod collection;
 
 mod error;
 pub use error::Error;
@@ -17,6 +16,8 @@ pub use files::FilesBuilder;
 
 pub mod client;
 pub use client::{Client, AuthorizedClient, Token, PocketBaseClient};
+
+use crate::files::File;
 
 #[derive(Debug, Deserialize)]
 struct PocketBaseError {
@@ -153,14 +154,14 @@ pub enum BatchRequest {
     Create {
         collection: String,
         record: Value,
-        files: BTreeMap<String, PathBuf>,
+        files: BTreeMap<String, File>,
         options: CreateOptions,
     },
     Update {
         collection: String,
         id: String,
         record: Value,
-        files: BTreeMap<String, PathBuf>,
+        files: BTreeMap<String, File>,
         options: UpdateOptions,
     },
     Delete {
@@ -216,7 +217,7 @@ impl BatchRequest {
         }
     }
 
-    pub fn files(&self) -> Option<&BTreeMap<String, PathBuf>> {
+    pub fn files(&self) -> Option<&BTreeMap<String, File>> {
         match self {
             Self::Create { files, .. } => (!files.is_empty()).then_some(files),
             Self::Update { files, .. } => (!files.is_empty()).then_some(files),

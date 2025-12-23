@@ -1,17 +1,9 @@
 use chrono::{DateTime, TimeZone, Utc};
-use futures_lite::io::AsyncRead;
+use reqwest::RequestBuilder;
 use serde_json::Value;
-use std::{collections::BTreeMap, io::Read};
+use std::collections::BTreeMap;
 
-use http_client_multipart::Multipart;
-use isahc::{
-    AsyncBody, AsyncReadResponseExt, Body, ReadResponseExt,
-    http::{
-        Extensions, HeaderMap, HeaderName, HeaderValue, StatusCode, Version, request::Builder,
-        uri::PathAndQuery,
-    },
-};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{Claims, Error, FilesBuilder, Health, batch::BatchBuilder, collection::CollectionBuilder, error::FieldError};
@@ -33,28 +25,26 @@ impl Token {
 
 pub trait PocketBaseClient {
     fn base_uri(&self) -> String;
-    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
-    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
-    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
-    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_>;
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder;
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder;
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder;
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder;
 }
 
-#[derive(Clone)]
 pub struct Client {
-    pub base_url: Url,
-    client: isahc::HttpClient,
+    pub base_uri: Url,
+    client: reqwest::Client,
 }
-
 impl Client {
-    pub fn new(base_url: impl AsRef<str>) -> Self {
+    pub fn new(base_uri: impl AsRef<str>) -> Self {
         Self {
-            client: isahc::HttpClient::new().unwrap(),
-            base_url: Url::parse(base_url.as_ref()).unwrap(),
+            client: Default::default(),
+            base_uri: Url::parse(base_uri.as_ref()).unwrap(),
         }
     }
 
     pub fn authorize(&self, token: Token) -> AuthorizedClient {
-        AuthorizedClient { client: self.clone(), token }
+        AuthorizedClient::new(self.base_uri.clone(), token)
     }
 
     pub fn collection<'c, I: std::fmt::Display>(
@@ -76,59 +66,39 @@ impl Client {
 
     pub fn files<'c>(&'c self) -> FilesBuilder<'c> {
         FilesBuilder {
-            base_url: &self.base_url,
+            base_uri: &self.base_uri,
         }
     }
 
     pub async fn health(&self) -> Result<Health, Error> {
         Ok(self
             .get("/api/health")
-            .send_async()
+            .send()
             .await?
-            .json_async()
+            .json()
             .await?)
     }
 }
 
 impl PocketBaseClient for Client {
     fn base_uri(&self) -> String {
-        self.base_url.to_string()
+        self.base_uri.to_string()
     }
 
-    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        RequestBuilder {
-            client: &self.client,
-            request_builder: isahc::Request::get(
-                self.base_url.join(uri.as_ref()).unwrap().to_string(),
-            ),
-        }
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.get(self.base_uri.join(uri.as_ref()).unwrap())
     }
 
-    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        RequestBuilder {
-            client: &self.client,
-            request_builder: isahc::Request::post(
-                self.base_url.join(uri.as_ref()).unwrap().to_string(),
-            ),
-        }
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.post(self.base_uri.join(uri.as_ref()).unwrap())
     }
 
-    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        RequestBuilder {
-            client: &self.client,
-            request_builder: isahc::Request::patch(
-                self.base_url.join(uri.as_ref()).unwrap().to_string(),
-            ),
-        }
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.patch(self.base_uri.join(uri.as_ref()).unwrap())
     }
 
-    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        RequestBuilder {
-            client: &self.client,
-            request_builder: isahc::Request::delete(
-                self.base_url.join(uri.as_ref()).unwrap().to_string(),
-            ),
-        }
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.delete(self.base_uri.join(uri.as_ref()).unwrap())
     }
 }
 
@@ -148,16 +118,17 @@ pub enum AuthResult {
     },
 }
 
-#[derive(Clone)]
 pub struct AuthorizedClient {
-    client: Client,
+    pub base_uri: Url,
     token: Token,
+    client: reqwest::Client,
 }
 
 impl AuthorizedClient {
     pub fn new(base_url: impl AsRef<str>, token: Token) -> Self {
         Self {
-            client: Client::new(base_url),
+            base_uri: Url::parse(base_url.as_ref()).unwrap(),
+            client: Default::default(),
             token
         }
     }
@@ -176,12 +147,11 @@ impl AuthorizedClient {
         } = &self.token;
 
         let result = self
-            .client
             .post(format!("/api/collections/{collection}/auth-refresh"))
             .header("Authorization", auth)
-            .send_async()
+            .send()
             .await?
-            .json_async::<AuthResult>()
+            .json::<AuthResult>()
             .await?;
 
         match result {
@@ -225,183 +195,42 @@ impl AuthorizedClient {
 
     pub fn files<'c>(&'c self) -> FilesBuilder<'c> {
         FilesBuilder {
-            base_url: &self.client.base_url,
+            base_uri: &self.base_uri,
         }
     }
 
     pub async fn health(&self) -> Result<Health, Error> {
         Ok(self
             .get("/api/health")
-            .send_async()
+            .send()
             .await?
-            .json_async()
+            .json()
             .await?)
     }
 }
 
 impl PocketBaseClient for AuthorizedClient {
     fn base_uri(&self) -> String {
-        self.client.base_uri()
+        self.base_uri.to_string()
     }
 
-    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        self.client.get(uri)
+    fn get(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.get(self.base_uri.join(uri.as_ref()).unwrap())
             .header("Authorization", &self.token.auth)
     }
 
-    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        self.client.post(uri)
+    fn post(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.post(self.base_uri.join(uri.as_ref()).unwrap())
             .header("Authorization", &self.token.auth)
     }
 
-    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        self.client.patch(uri)
+    fn patch(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.patch(self.base_uri.join(uri.as_ref()).unwrap())
             .header("Authorization", &self.token.auth)
     }
 
-    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder<'_> {
-        self.client.delete(uri)
+    fn delete(&self, uri: impl AsRef<str>) -> RequestBuilder {
+        self.client.delete(self.base_uri.join(uri.as_ref()).unwrap())
             .header("Authorization", &self.token.auth)
-    }
-}
-
-pub struct RequestBuilder<'c> {
-    client: &'c isahc::HttpClient,
-    request_builder: Builder,
-}
-
-#[allow(dead_code)]
-impl<'c> RequestBuilder<'c> {
-    pub fn header<K, V>(self, key: K, value: V) -> Self
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<isahc::http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<isahc::http::Error>,
-    {
-        Self {
-            client: self.client,
-            request_builder: self.request_builder.header(key, value),
-        }
-    }
-
-    pub fn query<S: Serialize>(self, value: S) -> Result<Self, Error> {
-        let query = serde_urlencoded::to_string(value)?;
-
-        let mut parts = self.request_builder.uri_ref().unwrap().clone().into_parts();
-
-        let path_and_query = parts.path_and_query.as_ref().unwrap();
-        let path_and_query =
-            PathAndQuery::try_from(format!("{}?{}", path_and_query.path(), query))?;
-
-        parts.path_and_query.replace(path_and_query);
-
-        Ok(Self {
-            client: self.client,
-            request_builder: self.request_builder.uri(parts),
-        })
-    }
-
-    pub fn multipart(self, form: Multipart) -> Result<Request<'c, AsyncBody>, Error> {
-        Ok(self
-            .header("Content-Type", "multipart/form-data")
-            .body(AsyncBody::from_reader(form.into_reader(None)))?)
-    }
-
-    pub fn json<T: Serialize>(self, data: &T) -> Result<Request<'c, String>, Error> {
-        Ok(self
-            .header("Content-Type", "application/json")
-            .body(serde_json::to_string(data)?)?)
-    }
-
-    pub fn form<T: Serialize>(self, data: &T) -> Result<Request<'c, String>, Error> {
-        Ok(self
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(serde_urlencoded::to_string(data)?)?)
-    }
-
-    pub fn body<B>(self, body: B) -> Result<Request<'c, B>, Error> {
-        Ok(Request {
-            client: self.client,
-            request: self.request_builder.body(body)?,
-        })
-    }
-
-    pub fn send(self) -> Result<Response<Body>, Error> {
-        Request {
-            client: self.client,
-            request: self.request_builder.body(())?,
-        }
-        .send()
-    }
-
-    pub async fn send_async(self) -> Result<Response<AsyncBody>, Error> {
-        Request {
-            client: self.client,
-            request: self.request_builder.body(())?,
-        }
-        .send_async()
-        .await
-    }
-}
-
-pub struct Request<'c, B> {
-    client: &'c isahc::HttpClient,
-    request: isahc::Request<B>,
-}
-
-impl<'c, B: Into<Body>> Request<'c, B> {
-    pub fn send(self) -> Result<Response<Body>, Error> {
-        Ok(Response(self.client.send(self.request)?))
-    }
-}
-
-impl<'c, B: Into<AsyncBody>> Request<'c, B> {
-    pub async fn send_async(self) -> Result<Response<AsyncBody>, Error> {
-        Ok(Response(self.client.send_async(self.request).await?))
-    }
-}
-
-pub struct Response<B>(isahc::Response<B>);
-#[allow(dead_code)]
-impl<R> Response<R> {
-    pub fn version(&self) -> Version {
-        self.0.version()
-    }
-
-    pub fn status(&self) -> StatusCode {
-        self.0.status()
-    }
-
-    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
-        self.0.headers()
-    }
-
-    pub fn extensions(&self) -> &Extensions {
-        self.0.extensions()
-    }
-}
-
-#[allow(dead_code)]
-impl<R: Read> Response<R> {
-    pub fn text(mut self) -> std::io::Result<String> {
-        self.0.text()
-    }
-
-    pub fn json<T: DeserializeOwned>(mut self) -> std::io::Result<T> {
-        let body = self.0.text()?;
-        Ok(serde_json::from_str(&body)?)
-    }
-}
-
-#[allow(dead_code)]
-impl<R: AsyncRead + Unpin> Response<R> {
-    pub async fn text_async(mut self) -> std::io::Result<String> {
-        self.0.text().await
-    }
-
-    pub async fn json_async<T: DeserializeOwned>(mut self) -> std::io::Result<T> {
-        let body = self.0.text().await?;
-        Ok(serde_json::from_str(&body)?)
     }
 }

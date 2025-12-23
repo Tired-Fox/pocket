@@ -1,10 +1,11 @@
-use std::{collections::BTreeMap, path::PathBuf};
-
-use http_client_multipart::Multipart;
+use reqwest::{Body, multipart::{Form, Part}};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
-use crate::{BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions, client::PocketBaseClient};
+use crate::{
+    BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions, client::PocketBaseClient, files::File,
+};
 
 pub struct BatchBuilder<'p, P: PocketBaseClient> {
     pub(crate) pocketbase: &'p P,
@@ -32,18 +33,40 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
                     ctx
                 });
 
-        let mut form = Multipart::new();
-        form.add_text(
+        let mut form = Form::new();
+        form = form.text(
             "@jsonPayload",
             serde_json::to_string(&json!({ "requests": requests }))?,
         );
 
-        for (i, files) in files.into_iter().enumerate() {
+        for files in files.into_iter() {
             if let Some(files) = files {
-                for (name, path) in files {
-                    form.add_file(format!("requests.{i}.{name}"), path, None)
-                        .await
-                        .map_err(Error::custom)?;
+                for (name, file) in files {
+                    match file {
+                        File::Path(path) => {
+                            let file = tokio::fs::File::open(&path).await?;
+                            let stream = FramedRead::new(file, BytesCodec::new());
+
+                            form = form
+                                .part(
+                                    name.to_string(),
+                                    Part::stream(Body::wrap_stream(stream))
+                                        .file_name(path.file_name().unwrap().to_string_lossy().to_string())
+                                        .mime_str(mime_to_ext::ext_to_mime(path.extension().unwrap().to_string_lossy().as_ref()).unwrap())?
+                                );
+                        },
+                        File::Raw {
+                            filename,
+                            mime,
+                            bytes,
+                        } => form = form
+                            .part(
+                                name.to_string(),
+                                Part::bytes(bytes.clone())
+                                    .file_name(filename.to_string())
+                                    .mime_str(&mime)?
+                            ),
+                    }
                 }
             }
         }
@@ -51,14 +74,14 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
         let res = self
             .pocketbase
             .post("/api/batch")
-            .multipart(form)?
-            .send_async()
+            .multipart(form)
+            .send()
             .await?;
 
         if !res.status().is_success() {
-            return Err(res.json_async::<PocketBaseError>().await?.into());
+            return Err(res.json::<PocketBaseError>().await?.into());
         }
-        Ok(res.json_async::<T>().await?)
+        Ok(res.json::<T>().await?)
     }
 }
 
@@ -74,13 +97,13 @@ where
     pub fn create(
         self,
         record: impl Serialize,
-        files: impl Into<BTreeMap<String, PathBuf>>,
+        files: impl IntoIterator<Item=(String, File)>,
         options: CreateOptions,
     ) -> Result<(), Error> {
         self.batch.requests.push(BatchRequest::Create {
             collection: self.identifier.to_string(),
             record: serde_json::to_value(record)?,
-            files: files.into(),
+            files: files.into_iter().collect(),
             options,
         });
         Ok(())
@@ -90,14 +113,14 @@ where
         self,
         id: impl std::fmt::Display,
         record: impl Serialize,
-        files: impl Into<BTreeMap<String, PathBuf>>,
+        files: impl IntoIterator<Item=(String, File)>,
         options: UpdateOptions,
     ) -> Result<(), Error> {
         self.batch.requests.push(BatchRequest::Update {
             collection: self.identifier.to_string(),
             id: id.to_string(),
             record: serde_json::to_value(record)?,
-            files: files.into(),
+            files: files.into_iter().collect(),
             options,
         });
         Ok(())

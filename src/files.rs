@@ -7,7 +7,7 @@ use serde::Deserialize;
 use url::Url;
 
 pub struct FilesBuilder<'c> {
-    pub(crate) base_url: &'c Url,
+    pub(crate) base_uri: &'c Url,
 }
 
 impl<'c> FilesBuilder<'c> {
@@ -17,7 +17,7 @@ impl<'c> FilesBuilder<'c> {
         id: impl std::fmt::Display,
         filename: impl std::fmt::Display,
     ) -> Url {
-        self.base_url
+        self.base_uri
             .join(&format!("/api/files/{collection_id}/{id}/{filename}"))
             .unwrap()
     }

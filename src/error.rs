@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use isahc::http::uri::InvalidUri;
 use serde::Deserialize;
 
 use crate::PocketBaseError;
@@ -47,6 +46,12 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+impl From<reqwest::Error> for Error {
+    fn from(value: reqwest::Error) -> Self {
+        Self::Custom(value.to_string())
+    }
+}
+
 impl From<jsonwebtoken::errors::Error> for Error {
     fn from(value: jsonwebtoken::errors::Error) -> Self {
         Self::Custom(value.to_string())
@@ -73,24 +78,6 @@ impl From<std::io::Error> for Error {
 
 impl From<PocketBaseError> for Error {
     fn from(value: PocketBaseError) -> Self {
-        Self::Custom(value.to_string())
-    }
-}
-
-impl From<isahc::Error> for Error {
-    fn from(value: isahc::Error) -> Self {
-        Self::Custom(value.to_string())
-    }
-}
-
-impl From<isahc::http::Error> for Error {
-    fn from(value: isahc::http::Error) -> Self {
-        Self::Custom(value.to_string())
-    }
-}
-
-impl From<InvalidUri> for Error {
-    fn from(value: InvalidUri) -> Self {
         Self::Custom(value.to_string())
     }
 }
