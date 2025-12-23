@@ -39,7 +39,7 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
             serde_json::to_string(&json!({ "requests": requests }))?,
         );
 
-        for files in files.into_iter() {
+        for (i, files) in files.into_iter().enumerate() {
             if let Some(files) = files {
                 for (name, file) in files {
                     match file {
@@ -49,7 +49,7 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
 
                             form = form
                                 .part(
-                                    name.to_string(),
+                                    format!("requests.{i}.{name}"),
                                     Part::stream(Body::wrap_stream(stream))
                                         .file_name(path.file_name().unwrap().to_string_lossy().to_string())
                                         .mime_str(mime_to_ext::ext_to_mime(path.extension().unwrap().to_string_lossy().as_ref()).unwrap())?
@@ -61,7 +61,7 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
                             bytes,
                         } => form = form
                             .part(
-                                name.to_string(),
+                                format!("requests.{i}.{name}"),
                                 Part::bytes(bytes.clone())
                                     .file_name(filename.to_string())
                                     .mime_str(&mime)?
