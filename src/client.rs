@@ -133,8 +133,8 @@ impl AuthorizedClient {
         }
     }
 
-    pub fn token(self) -> Token {
-        self.token
+    pub fn token(&self) -> &Token {
+        &self.token
     }
 
     pub fn is_expired(&self) -> bool {
