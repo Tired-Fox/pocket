@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
-use reqwest::{Body, Method, header::CONTENT_TYPE, multipart::{Form, Part}};
+use reqwest::{Body, multipart::{Form, Part}};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 use crate::{
-    BatchHttpRequest, BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions, client::PocketBaseClient, files::File
+    BatchRequest, CreateOptions, Error, PocketBaseError, UpdateOptions, client::PocketBaseClient, files::File
 };
 
 pub struct BatchBuilder<'p, P: PocketBaseClient> {
@@ -25,43 +23,14 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
         }
     }
 
-    pub fn get<'c, I: std::fmt::Display>(
-        &'c mut self,
-        url: I,
-    ) -> BatchHttpBuilder<'p, 'c, P> {
-        BatchHttpBuilder::new(self, Method::GET, url.to_string())
-    }
-    pub fn post<'c, I: std::fmt::Display>(
-        &'c mut self,
-        url: I,
-    ) -> BatchHttpBuilder<'p, 'c, P> {
-        BatchHttpBuilder::new(self, Method::POST, url.to_string())
-    }
-    pub fn put<'c, I: std::fmt::Display>(
-        &'c mut self,
-        url: I,
-    ) -> BatchHttpBuilder<'p, 'c, P> {
-        BatchHttpBuilder::new(self, Method::PUT, url.to_string())
-    }
-    pub fn patch<'c, I: std::fmt::Display>(
-        &'c mut self,
-        url: I,
-    ) -> BatchHttpBuilder<'p, 'c, P> {
-        BatchHttpBuilder::new(self, Method::PATCH, url.to_string())
-    }
-    pub fn delete<'c, I: std::fmt::Display>(
-        &'c mut self,
-        url: I,
-    ) -> BatchHttpBuilder<'p, 'c, P> {
-        BatchHttpBuilder::new(self, Method::DELETE, url.to_string())
-    }
-
     pub async fn send<T: DeserializeOwned>(self) -> Result<T, Error> {
         let (requests, files) =
             self.requests
                 .iter()
                 .fold((Vec::new(), Vec::new()), |mut ctx, request| {
-                    ctx.0.push(request.request());
+                    let req = request.request();
+                    println!("{req:?}");
+                    ctx.0.push(req);
                     ctx.1.push(request.files());
                     ctx
                 });
@@ -115,62 +84,6 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
             return Err(res.json::<PocketBaseError>().await?.into());
         }
         Ok(res.json::<T>().await?)
-    }
-}
-
-pub struct BatchHttpBuilder<'p, 'c, P: PocketBaseClient> {
-    batch: &'c mut BatchBuilder<'p, P>,
-
-    method: Method,
-    url: String,
-    headers: HashMap<String, String>,
-    query: Option<String>,
-    body: Option<String>,
-}
-impl<'p, 'c, P: PocketBaseClient> BatchHttpBuilder<'p, 'c, P> {
-    pub(crate) fn new(batch: &'c mut BatchBuilder<'p, P>, method: Method, url: String) -> Self {
-        Self {
-            batch,
-            method,
-            url,
-            headers: Default::default(),
-            query: None,
-            body: None,
-        }
-    }
-
-    pub fn header<K, V>(mut self, key: K, value: V) -> Self
-    where
-        K: std::fmt::Display,
-        V: std::fmt::Display,
-    {
-        self.headers.insert(key.to_string(), value.to_string());
-        self
-    }
-
-    pub fn query<S: Serialize>(self, query: S) -> Result<Self, serde_urlencoded::ser::Error> {
-        Ok(Self {
-            query: Some(serde_urlencoded::to_string(query)?),
-            ..self
-        })
-    }
-
-    pub fn json<S: Serialize>(mut self, body: &S) -> Result<Self, serde_json::Error> {
-        self.body = Some(serde_json::to_string(body)?);
-        Ok(self.header(CONTENT_TYPE, "application/json"))
-    }
-
-    pub fn finish(self) {
-        self.batch.requests.push(BatchRequest::Http(BatchHttpRequest {
-            method: self.method.to_string(),
-            url: if let Some(q) = self.query {
-                format!("{}?{q}", self.url)
-            } else {
-                self.url
-            },
-            headers: self.headers,
-            body: self.body
-        }));
     }
 }
 
