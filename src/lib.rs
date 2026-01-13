@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -168,6 +168,17 @@ pub enum BatchRequest {
         collection: String,
         id: String,
     },
+    Http(BatchHttpRequest),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchHttpRequest {
+    method: String,
+    url: String,
+    #[serde(skip_serializing_if="HashMap::is_empty")]
+    headers: HashMap<String, String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    body: Option<String>
 }
 
 impl BatchRequest {
@@ -214,6 +225,7 @@ impl BatchRequest {
                 "method": "DELETE",
                 "url": format!("/api/collections/{collection}/records/{id}"),
             }),
+            Self::Http(req) => serde_json::to_value(req).unwrap(),
         }
     }
 
@@ -222,6 +234,7 @@ impl BatchRequest {
             Self::Create { files, .. } => (!files.is_empty()).then_some(files),
             Self::Update { files, .. } => (!files.is_empty()).then_some(files),
             Self::Delete { .. } => None,
+            Self::Http(_) => None,
         }
     }
 }
