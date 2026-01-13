@@ -29,7 +29,6 @@ impl<'p, P: PocketBaseClient> BatchBuilder<'p, P> {
                 .iter()
                 .fold((Vec::new(), Vec::new()), |mut ctx, request| {
                     let req = request.request();
-                    println!("{req:?}");
                     ctx.0.push(req);
                     ctx.1.push(request.files());
                     ctx
